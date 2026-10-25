@@ -89,7 +89,7 @@ const start = async () => {
 
       if (request.method === "GET" && pathname === "/health") {
         await Promise.all([pool.query("SELECT 1"), mongo.db().command({ ping: 1 }), redis.ping()]);
-        sendJson(response, 200, { status: "ok" }, [...trace, "galera1", "mongodb", "redis"]);
+        sendJson(response, 200, { status: "ok" }, [...trace, "galera-lb", "mongodb", "redis"]);
         return;
       }
 
@@ -111,7 +111,12 @@ const start = async () => {
           return;
         }
         trace[trace.length - 1] = "redis (cache miss)";
-        trace.push("galera1");
+        let dbLabel = "galera-lb";
+        try {
+          const [hostRows] = await pool.query("SELECT @@hostname AS host");
+          if (hostRows?.[0]?.host) dbLabel = `galera (${hostRows[0].host})`;
+        } catch {}
+        trace.push(dbLabel);
         const [products] = await pool.execute(
           "SELECT id, sku, name, description, price FROM products ORDER BY price ASC, id ASC LIMIT 10",
         );

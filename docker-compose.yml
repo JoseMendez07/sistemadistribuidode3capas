@@ -183,7 +183,7 @@ services:
   app1:
     build: ./application
     environment: &application-environment
-      DB_HOST: galera1
+      DB_HOST: galera-lb
       DB_PORT: 3306
       DB_NAME: ${CATALOG_DB_NAME:?Set CATALOG_DB_NAME in .env}
       DB_USER: ${CATALOG_DB_USER:?Set CATALOG_DB_USER in .env}
@@ -249,6 +249,33 @@ services:
 
   mongodb:
     image: mongo:8
+    restart: unless-stopped
+    entrypoint:
+      - /bin/bash
+      - -c
+      - |
+        echo "clusterauthsecretkey123456789" > /data/db/keyfile
+        chmod 400 /data/db/keyfile
+        chown 999:999 /data/db/keyfile
+        (
+          until mongosh --port 27017 --eval "db.adminCommand({ ping: 1 })" >/dev/null 2>&1; do
+            sleep 2
+          done
+          mongosh --port 27017 -u "$$MONGO_INITDB_ROOT_USERNAME" -p "$$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin --eval "
+            try {
+              rs.status();
+            } catch (err) {
+              rs.initiate({ _id: 'rs0', members: [{ _id: 0, host: 'mongodb:27017' }] });
+            }
+          " >/dev/null 2>&1 || mongosh --port 27017 --eval "
+            try {
+              rs.status();
+            } catch (err) {
+              rs.initiate({ _id: 'rs0', members: [{ _id: 0, host: 'mongodb:27017' }] });
+            }
+          " >/dev/null 2>&1 || true
+        ) &
+        exec docker-entrypoint.sh mongod --replSet rs0 --bind_ip_all --keyFile /data/db/keyfile
     environment:
       MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:?Set MONGO_ROOT_USERNAME in .env}
       MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:?Set MONGO_ROOT_PASSWORD in .env}
@@ -269,6 +296,9 @@ services:
 
   redis:
     image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
+    volumes:
+      - redis-data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -346,6 +376,21 @@ services:
     networks:
       - database
 
+  galera-lb:
+    image: haproxy:3.2-alpine
+    volumes:
+      - ./haproxy/galera.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    restart: unless-stopped
+    depends_on:
+      galera1:
+        condition: service_healthy
+      galera2:
+        condition: service_healthy
+      galera3:
+        condition: service_healthy
+    networks:
+      - database
+
   nagios:
     image: jasonrivers/nagios:latest
     ports:
@@ -376,6 +421,7 @@ services:
       - galera3
       - mongodb
       - redis
+      - galera-lb
     networks:
       - edge
       - application
@@ -386,6 +432,7 @@ volumes:
   galera2-data:
   galera3-data:
   mongodb-data:
+  redis-data:
 
 networks:
   edge:
