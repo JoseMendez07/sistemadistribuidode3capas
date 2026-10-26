@@ -5,4 +5,4 @@ RUN apk add --no-cache bash curl \
  && ln -s /opt/apache-jmeter-${JMETER_VERSION}/bin/jmeter /usr/local/bin/jmeter
 ENV JVM_ARGS="-Xms256m -Xmx768m"
 COPY run.sh /runbook/run.sh
-RUN chmod 0755 /runbook/run.sh
+RUN sed -i 's/\r$//' /runbook/run.sh && chmod 0755 /runbook/run.sh
